@@ -12,14 +12,16 @@ textarea{width:100%;min-height:130px;border:0;background:transparent;color:var(-
 button.s,label.b.s{background:transparent;color:var(--ac);border:1px solid var(--ac)}input[type=file]{display:none}
 #out{white-space:pre-wrap;min-height:60px}#out mark{background:var(--unk);color:inherit;border-radius:3px;padding:0 2px}
 .note{font-size:.8rem;color:var(--mut)}details summary{cursor:pointer;font-weight:600}.hd{font-size:.8rem;color:var(--mut);margin-bottom:4px}
+#sheet[hidden]{display:none}#sheet{position:fixed;left:0;right:0;bottom:0;background:var(--card);border-top:2px solid var(--ac);padding:12px 12px calc(12px + env(safe-area-inset-bottom,0px));box-shadow:0 -4px 16px rgba(0,0,0,.25);z-index:20}#sheet textarea{min-height:70px;border:1px solid var(--bd);border-radius:8px;padding:8px;margin:6px 0}.c{cursor:pointer;border-bottom:1px dotted var(--mut)}.c.u{background:var(--unk);border-radius:3px;padding:0 2px}.ed{cursor:pointer;color:var(--ac);margin:0 6px;font-size:.9em}
 </style></head><body><main>
 <h1>Traducteur Français → Goun</h1><p class="sub" id="st">Chargement des données…</p>
 <div class="card"><div class="hd">Français</div><textarea id="in" placeholder="Colle ou écris ton texte ici…"></textarea>
 <div class="row"><button id="go">Traduire</button><label class="b s">Document (.txt, .docx)<input type="file" id="fi" accept=".txt,.docx"></label><button class="s" id="clr">Effacer</button></div></div>
 <div class="card"><div class="hd">Goun</div><div id="out"></div><div class="row" style="margin-top:8px"><button class="s" id="cp">Copier</button><button class="s" id="dl">Télécharger .txt</button></div>
-<p class="note">Les mots surlignés ne sont pas dans la base : ils sont laissés en français et doivent être traduits à la main.</p></div>
+<p class="note">Touche un mot ou une expression pour la corriger ; ✎ corrige toute la phrase. Les mots surlignés ne sont pas dans la base. Ton outil retient tes corrections et les réutilise.</p></div>
 <div class="card"><details><summary>Mon glossaire (corrections)</summary><p class="note">Une ligne par entrée : <code>français = goun</code>. Ces entrées priment sur tout le reste et restent sur cet appareil.</p>
-<textarea id="gl" style="min-height:90px" placeholder="ferme = ..."></textarea><button class="s" id="sg">Enregistrer</button></details></div>
+<textarea id="gl" style="min-height:90px" placeholder="ferme = ..."></textarea><div class="row"><button class="s" id="sg">Enregistrer</button><button class="s" id="ex">Exporter mes corrections</button><label class="b s">Importer<input type="file" id="im" accept=".json"></label></div><p class="note">Pour que tout le monde en profite : exporte tes corrections et envoie le fichier pour améliorer le traducteur.</p></details></div>
+<div id="sheet" hidden><div class="hd" id="shT"></div><div class="note">Français : <b id="shF"></b></div><textarea id="shI"></textarea><div class="row"><button id="shS">Enregistrer</button><button class="s" id="shX">Annuler</button></div></div>
 <p class="note">Traducteur statistique appris sur la Bible (registre biblique). À faire relire par un locuteur avant tout usage officiel.</p></main>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
 <script>
@@ -43,20 +45,44 @@ for(let i=0;i<n;i++){const hs=H[i];if(!hs.length)continue;
   for(const h of hs)for(const op of opts){const g=op[0].split(' ').filter(Boolean);let sc=h.s+op[1]+.5*op[2]+(L>1?.15*L:0)+.2*g.length*0;let p=h.l;
    for(const w of g){sc+=.8*lp(w,p);p=w}
    if(op[3]===1)sc-=1;
-   H[i+L].push({s:sc,l:p,o:op[0]?h.o.concat([[op[0],op[3]===1]]):h.o});}}
+   H[i+L].push({s:sc,l:p,o:op[0]?h.o.concat([[op[0],op[3]===1,i,L]]):h.o});}}
  for(let j=i+1;j<=n;j++){if(H[j].length>B*4){H[j].sort((a,b)=>b.s-a.s);H[j]=H[j].slice(0,B)}}
 }
 const e=H[n];if(!e.length)return[];e.sort((a,b)=>b.s-a.s);return e[0].o}
 const SYNLS={};for(const k in SYN){const s=lstem(k);if(!SYNLS[s])SYNLS[s]=SYN[k]}
-function expand(a,oa){const o=[],q=[];a.forEach((w,i)=>{const v=!user[w]&&!PT[w]&&/\p{L}/u.test(w)?(SYN[w]||(!LEX[w]?SYNLS[lstem(w)]:null)):null;if(v){for(const x of (norm(v).match(TOK)||[])){o.push(x);q.push(x)}}else{o.push(w);q.push(oa[i]||w)}});return [o,q]}
-function tr1(line){const oa=line.replace(/'/g,'’').replace(/’/g,'’ ').normalize('NFC').match(TOK)||[];const [toks,orig]=expand(norm(line).match(TOK)||[],oa);if(!toks.length)return{t:line,h:line};
+const CH=[],SENT=[];let LTM={};try{LTM=JSON.parse(localStorage.getItem('tm')||'{}')}catch(e){}
+const esc=x=>x.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+function expand(a,oa){const prot=new Array(a.length).fill(false);
+ for(let i=0;i<a.length;i++)for(let L=1;L<=5&&i+L<=a.length;L++){if(user[a.slice(i,i+L).join(' ')])for(let k=i;k<i+L;k++)prot[k]=true}
+ const o=[],q=[],m=[];a.forEach((w,i)=>{const v=!prot[i]&&!user[w]&&!PT[w]&&/\p{L}/u.test(w)?(SYN[w]||(!LEX[w]?SYNLS[lstem(w)]:null)):null;
+  if(v){for(const x of (norm(v).match(TOK)||[])){o.push(x);q.push(x);m.push(i)}}else{o.push(w);q.push(oa[i]||w);m.push(i)}});return [o,q,m]}
+function tr1(line){const oa=line.replace(/'/g,'’').replace(/’/g,'’ ').normalize('NFC').match(TOK)||[];const src=norm(line).match(TOK)||[];
+ const [toks,orig,map]=expand(src,oa);if(!toks.length)return{t:line,h:esc(line)};
  const o=decode(toks,orig);let t='',h='',first=true;
- for(const[w,u]of o){let x=w;if(first&&/\p{L}/u.test(x[0])){x=x[0].toUpperCase()+x.slice(1);}first=false;
+ for(const[w,u,i,L]of o){let x=w;if(first&&/\p{L}/u.test(x[0])){x=x[0].toUpperCase()+x.slice(1)}first=false;
   const sp=/^[,.;:?!”»)\]]/.test(x)||/[“«(\[]$/.test(t.trimEnd().slice(-1))?'':' ';
-  const esc=x.replace(/&/g,'&amp;').replace(/</g,'&lt;');t+=(t&&sp?' ':'')+x;h+=(h&&sp?' ':'')+(u?'<mark>'+esc+'</mark>':esc)}
+  const mm=map.slice(i,i+L),a=Math.min(...mm),b=Math.max(...mm);
+  const key=src.slice(a,b+1).join(' ').replace(/\s+/g,' ').trim();
+  let piece;if(!/[\p{L}\p{N}]/u.test(x)||!key)piece=esc(x);else{CH.push({key,src:key.replace(/’ /g,'’'),text:x});piece='<span class="c'+(u?' u':'')+'" data-i="'+(CH.length-1)+'">'+esc(x)+'</span>'}
+  t+=(t&&sp?' ':'')+x;h+=(h&&sp?' ':'')+piece}
  const fx=s=>s.replace(/ +([,.;:?!”»)\]])/g,'$1').replace(/([“«(\[]) +/g,'$1').replace(/ {2,}/g,' ');return{t:fx(t),h:fx(h)}}
-function tr(line){line=line.replace(/\b(av|ap)\. ?J\.-?C\./g,(m,a)=>(a=='av'?'avant':'après')+' Jésus Christ');const r=line.split(/(?<=[.?!])\s+/).map(s=>{const k=norm(s).replace(/\s+/g,' ').trim();return TM[k]?{t:TM[k],h:TM[k]}:tr1(s)});return{t:r.map(x=>x.t).join(' '),h:r.map(x=>x.h).join(' ')}}
-function run(txt){const ls=txt.split('\n');const r=ls.map(l=>l.trim()?tr(l):{t:'',h:''});$('out').innerHTML=r.map(x=>x.h).join('\n');window._t=r.map(x=>x.t).join('\n')}
+const AB=/\b(av|ap)\. ?J\.-?C\./g;
+function tr(line){line=line.replace(AB,(m,a)=>(a=='av'?'avant':'après')+' Jésus Christ');
+ const r=line.split(/(?<=[.?!])\s+/).map(s=>{const k=norm(s).replace(/\s+/g,' ').trim();const id=SENT.length;let res;
+  if(LTM[k])res={t:LTM[k],h:esc(LTM[k])};else if(TM[k])res={t:TM[k],h:esc(TM[k])};else res=tr1(s);
+  SENT.push({fr:s,key:k,t:res.t});return{t:res.t,h:'<span class="sn">'+res.h+'</span><a class="ed" data-s="'+id+'" title="Corriger la phrase">✎</a>'}});
+ return{t:r.map(x=>x.t).join(' '),h:r.map(x=>x.h).join(' ')}}
+function run(txt){CH.length=0;SENT.length=0;const ls=txt.split('\n');const r=ls.map(l=>l.trim()?tr(l):{t:'',h:''});$('out').innerHTML=r.map(x=>x.h).join('\n');window._t=r.map(x=>x.t).join('\n')}
+let cur=null;
+function openEd(kind,id){const c=kind=='c'?CH[id]:SENT[id];cur={kind,id};$('shT').textContent=kind=='c'?'Corriger ce mot ou cette expression':'Corriger toute la phrase';$('shF').textContent=kind=='c'?c.src:c.fr;$('shI').value=kind=='c'?c.text:c.t;$('sheet').hidden=false;$('shI').focus()}
+function saveGl(key,val){const t=$('gl').value.split('\n').filter(l=>l.trim()&&norm(l.split('=')[0].trim()).split(/\s+/).join(' ')!==key);t.push(key+' = '+val);$('gl').value=t.join('\n');try{localStorage.setItem('gl',$('gl').value)}catch(e){}loadGl()}
+$('shS').onclick=()=>{const v=$('shI').value.trim();if(!cur||!v){$('sheet').hidden=true;return}
+ if(cur.kind=='c')saveGl(CH[cur.id].key,v);else{LTM[SENT[cur.id].key]=v;try{localStorage.setItem('tm',JSON.stringify(LTM))}catch(e){}}
+ $('sheet').hidden=true;const y=window.scrollY;run($('in').value);window.scrollTo(0,y)};
+$('shX').onclick=()=>{$('sheet').hidden=true};
+$('out').onclick=e=>{const c=e.target.closest('.c'),d=e.target.closest('.ed');if(c)openEd('c',+c.dataset.i);else if(d)openEd('s',+d.dataset.s)};
+$('ex').onclick=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify({date:new Date().toISOString(),glossaire:$('gl').value,phrases:LTM},null,1)],{type:'application/json'}));a.download='corrections_traducteur_goun.json';a.click()};
+$('im').onchange=async e=>{const f=e.target.files[0];if(!f)return;try{const d=JSON.parse(await f.text());if(d.glossaire){$('gl').value=($('gl').value+'\n'+d.glossaire).trim();localStorage.setItem('gl',$('gl').value);loadGl()}Object.assign(LTM,d.phrases||{});localStorage.setItem('tm',JSON.stringify(LTM));alert('Corrections importées')}catch(x){alert('Fichier non reconnu')}};
 $('go').onclick=()=>{loadGl();run($('in').value)};$('clr').onclick=()=>{$('in').value='';$('out').innerHTML=''};
 $('cp').onclick=()=>{try{navigator.clipboard.writeText(window._t||'')}catch(e){}};
 $('dl').onclick=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([window._t||''],{type:'text/plain'}));a.download='traduction_goun.txt';a.click()};
